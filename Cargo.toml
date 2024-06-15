@@ -1,0 +1,8 @@
+[package]
+name = "alfred-mic"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alfred-rs = { path = "../alfred-rs" }
+cpal = "0.15.3"
