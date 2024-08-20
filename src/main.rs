@@ -31,10 +31,10 @@ fn get_device(device_name: String) -> Result<(Device, SupportedStreamConfig), an
     Ok((device, config))
 }
 
-fn record(device: &Device, config: SupportedStreamConfig) -> Result<String, anyhow::Error>{
+fn record(device: &Device, config: SupportedStreamConfig, dir: String) -> Result<String, anyhow::Error>{
     let id = Uuid::new_v4();
     // TODO: define tmp path
-    let path = format!("{id}.wav");
+    let path = format!("{dir}/{id}.wav");
     let path = path.as_str();
     debug!("{}", path);
     let spec = wav_spec_from_config(&config);
@@ -102,7 +102,7 @@ async fn main() -> Result<(), anyhow::Error> {
     module.listen(INPUT_TOPIC.to_string()).await?;
     loop {
         let (_, message) = module.receive().await?;
-        let audio_file = record(&device, config.clone())?;
+        let audio_file = record(&device, config.clone(), module.config.get_alfred_tmp_dir())?;
         let mut reply = message.clone();
         reply.text = audio_file;
         let resp_topic = reply.response_topics.pop_front().ok_or(anyhow::Error::msg("No response topic found"))?;
