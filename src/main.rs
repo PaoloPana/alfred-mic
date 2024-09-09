@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::sync::{Arc, Mutex};
 use alfred_rs::connection::{Receiver, Sender};
+use alfred_rs::message::MessageType;
 use uuid::Uuid;
 
 const MODULE_NAME: &'static str = "mic";
@@ -103,10 +104,8 @@ async fn main() -> Result<(), anyhow::Error> {
     loop {
         let (_, message) = module.receive().await?;
         let audio_file = record(&device, config.clone(), module.config.get_alfred_tmp_dir())?;
-        let mut reply = message.clone();
-        reply.text = audio_file;
-        let resp_topic = reply.response_topics.pop_front().ok_or(anyhow::Error::msg("No response topic found"))?;
-        module.send(resp_topic, &reply).await?;
+        let (topic, reply) = message.reply(audio_file, MessageType::AUDIO)?;
+        module.send(topic, &reply).await?;
     }
 }
 
