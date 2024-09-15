@@ -7,18 +7,20 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::sync::{Arc, Mutex};
 use alfred_rs::connection::{Receiver, Sender};
-use alfred_rs::message::MessageType;
+use alfred_rs::message::{Message, MessageType};
 use uuid::Uuid;
 
 const MODULE_NAME: &'static str = "mic";
 const INPUT_TOPIC: &'static str = "mic";
+const USER_RECORDED_EVENT: &'static str = "user_recorded";
+const USER_START_RECORDING_EVENT: &'static str = "user_start_recording";
 
 fn get_device(device_name: String) -> Result<(Device, SupportedStreamConfig), anyhow::Error> {
     let host = cpal::default_host();
     let device = if device_name == "default" {
         host.default_input_device().expect("Default device not found")
     } else {
-        host.input_devices().unwrap()
+        host.input_devices()?
             .find(|dev| {
                 debug!("{}", dev.name().unwrap());
                 return dev.name()
@@ -103,7 +105,10 @@ async fn main() -> Result<(), anyhow::Error> {
     module.listen(INPUT_TOPIC.to_string()).await?;
     loop {
         let (_, message) = module.receive().await?;
+        module.send_event(MODULE_NAME.to_string(), USER_START_RECORDING_EVENT.to_string(), &Message::default()).await?;
         let audio_file = record(&device, config.clone(), module.config.get_alfred_tmp_dir())?;
+        let event_message = Message { text: audio_file.clone(), message_type: MessageType::AUDIO, ..Message::default() };
+        module.send_event(MODULE_NAME.to_string(), USER_RECORDED_EVENT.to_string(), &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::AUDIO)?;
         module.send(topic, &reply).await?;
     }
