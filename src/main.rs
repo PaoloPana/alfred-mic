@@ -1,98 +1,97 @@
 use alfred_rs::interface_module::InterfaceModule;
 use alfred_rs::log::debug;
 use alfred_rs::tokio;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, FromSample, Sample, SupportedStreamConfig};
-use std::fs::File;
-use std::io::BufWriter;
-use std::sync::{Arc, Mutex};
 use alfred_rs::connection::{Receiver, Sender};
 use alfred_rs::message::{Message, MessageType};
 use uuid::Uuid;
+use pv_recorder::PvRecorderBuilder;
 
 const MODULE_NAME: &'static str = "mic";
 const INPUT_TOPIC: &'static str = "mic";
 const USER_RECORDED_EVENT: &'static str = "user_recorded";
 const USER_START_RECORDING_EVENT: &'static str = "user_start_recording";
 
-fn get_device(device_name: String) -> Result<(Device, SupportedStreamConfig), anyhow::Error> {
-    let host = cpal::default_host();
-    let device = if device_name == "default" {
-        host.default_input_device().expect("Default device not found")
-    } else {
-        host.input_devices()?
-            .find(|dev| {
-                debug!("{}", dev.name().unwrap());
-                return dev.name()
-                    .map(|dev_name| dev_name == device_name)
-                    .unwrap_or(false);
-            })
-            .expect(format!("Device {} not found", device_name).as_str())
-    };
-    let config = device.default_input_config().expect("Failed to get default input config");
-    debug!("Default input config: {:?}", config);
-    Ok((device, config))
+fn get_device_id(device_name: String, devices: Vec<String>) -> i32 {
+    for (id, dev) in devices.iter().enumerate() {
+        if dev.eq(&device_name) {
+            return id as i32;
+        }
+    }
+    0
 }
 
-fn record(device: &Device, config: SupportedStreamConfig, dir: String) -> Result<String, anyhow::Error>{
+fn get_threshold(dev_id: i32, lib_path: String) -> i64 {
+    debug!("Initializing pvrecorder...");
+    let recorder = PvRecorderBuilder::new(512)
+        .device_index(dev_id)
+        .library_path(lib_path.as_ref())
+        .init()
+        .expect("Failed to initialize pvrecorder");
+    recorder.start().expect("Failed to start audio recording");
+    let mut counter = 0;
+    let mut max_sum = 0;
+    while counter < 100 {
+        let frame = recorder.read().expect("Failed to read audio frame");
+        let mut sum: i64 = 0;
+        for frame in frame.clone() {
+            sum += frame.abs() as i64;
+        }
+        max_sum = max_sum.max(sum);
+        counter += 1;
+    }
+    recorder.stop().expect("Failed to stop audio recording");
+    max_sum
+}
+
+fn record(dev_id: i32, dir: String, threshold: i64, lib_path: String, silent_limit: i32) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4();
-    // TODO: define tmp path
     let path = format!("{dir}/{id}.wav");
     let path = path.as_str();
-    debug!("{}", path);
-    let spec = wav_spec_from_config(&config);
-    let writer = hound::WavWriter::create(path, spec)?;
-    let writer = Arc::new(Mutex::new(Some(writer)));
 
-    // A flag to indicate that recording is in progress.
-    println!("Begin recording...");
+    debug!("Initializing pvrecorder...");
+    let recorder = PvRecorderBuilder::new(512)
+        .library_path(lib_path.as_ref())
+        .device_index(dev_id)
+        .init()
+        .expect("Failed to initialize pvrecorder");
 
-    // Run the input stream on a separate thread.
-    let writer_2 = writer.clone();
+    debug!("Start recording...");
+    recorder.start().expect("Failed to start audio recording");
 
-    let err_fn = move |err| {
-        eprintln!("an error occurred on stream: {}", err);
-    };
-
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::I8 => device.build_input_stream(
-            &config.into(),
-            move |data, _: &_| write_input_data::<i8, i8>(data, &writer_2),
-            err_fn,
-            None,
-        )?,
-        cpal::SampleFormat::I16 => device.build_input_stream(
-            &config.into(),
-            move |data, _: &_| write_input_data::<i16, i16>(data, &writer_2),
-            err_fn,
-            None,
-        )?,
-        cpal::SampleFormat::I32 => device.build_input_stream(
-            &config.into(),
-            move |data, _: &_| write_input_data::<i32, i32>(data, &writer_2),
-            err_fn,
-            None,
-        )?,
-        cpal::SampleFormat::F32 => device.build_input_stream(
-            &config.into(),
-            move |data, _: &_| write_input_data::<f32, f32>(data, &writer_2),
-            err_fn,
-            None,
-        )?,
-        sample_format => {
-            return Err(anyhow::Error::msg(format!(
-                "Unsupported sample format '{sample_format}'"
-            )));
+    let mut audio_data = Vec::new();
+    let mut is_recording = true;
+    let mut is_silent = -1;
+    while is_recording {
+        let frame = recorder.read().expect("Failed to read audio frame");
+        let mut sum: i64 = 0;
+        for frame in frame.clone() {
+            sum += frame.abs() as i64;
         }
+        if sum.abs() > threshold {
+            is_silent = 0;
+        } else {
+            if is_silent >= 0 {
+                is_silent += 1;
+                is_recording = is_silent < silent_limit;
+            }
+        }
+        audio_data.extend_from_slice(&frame);
+    }
+
+    debug!("Stop recording...");
+    recorder.stop().expect("Failed to stop audio recording");
+
+    debug!("Dumping audio to file...");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16000u32,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
     };
-
-    stream.play()?;
-
-    // Let recording go for roughly three seconds.
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    drop(stream);
-    writer.lock().unwrap().take().unwrap().finalize()?;
-    debug!("Recording {} complete!", path);
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for sample in audio_data {
+        writer.write_sample(sample)?;
+    }
     Ok(path.to_string())
 }
 
@@ -101,49 +100,23 @@ async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
     let mut module = InterfaceModule::new(MODULE_NAME.to_string()).await?;
     let device_name = module.config.get_module_value("device".to_string()).unwrap_or("default".to_string());
-    let (device, config) = get_device(device_name)?;
+    let lib_path = module.config.get_module_value("library_path".to_string()).unwrap_or("./libpv_recorder.so".to_string());
+    let silent_limit = module.config.get_module_value("silent_limit".to_string())
+        .map(|s| s.parse::<i32>().unwrap())
+        .unwrap_or(50);
+    let audio_devices = PvRecorderBuilder::new(512)
+        .library_path(lib_path.as_ref()).get_available_devices()?;
+    let dev_id = get_device_id(device_name.clone(), audio_devices);
+    let threshold = get_threshold(dev_id, lib_path.clone());
+    debug!("Threshold: {}", threshold);
     module.listen(INPUT_TOPIC.to_string()).await?;
     loop {
         let (_, message) = module.receive().await?;
         module.send_event(MODULE_NAME.to_string(), USER_START_RECORDING_EVENT.to_string(), &Message::default()).await?;
-        let audio_file = record(&device, config.clone(), module.config.get_alfred_tmp_dir())?;
+        let audio_file = record(dev_id, module.config.get_alfred_tmp_dir(), threshold, lib_path.clone(), silent_limit)?;
         let event_message = Message { text: audio_file.clone(), message_type: MessageType::AUDIO, ..Message::default() };
         module.send_event(MODULE_NAME.to_string(), USER_RECORDED_EVENT.to_string(), &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::AUDIO)?;
         module.send(topic, &reply).await?;
-    }
-}
-
-fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
-    if format.is_float() {
-        hound::SampleFormat::Float
-    } else {
-        hound::SampleFormat::Int
-    }
-}
-
-fn wav_spec_from_config(config: &cpal::SupportedStreamConfig) -> hound::WavSpec {
-    hound::WavSpec {
-        channels: config.channels() as _,
-        sample_rate: config.sample_rate().0 as _,
-        bits_per_sample: (config.sample_format().sample_size() * 8) as _,
-        sample_format: sample_format(config.sample_format()),
-    }
-}
-
-type WavWriterHandle = Arc<Mutex<Option<hound::WavWriter<BufWriter<File>>>>>;
-
-fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
-    where
-        T: Sample,
-        U: Sample + hound::Sample + FromSample<T>,
-{
-    if let Ok(mut guard) = writer.try_lock() {
-        if let Some(writer) = guard.as_mut() {
-            for &sample in input.iter() {
-                let sample: U = U::from_sample(sample);
-                writer.write_sample(sample).ok();
-            }
-        }
     }
 }
