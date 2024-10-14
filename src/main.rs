@@ -98,10 +98,10 @@ fn record(dev_id: i32, dir: String, threshold: i64, lib_path: String, silent_lim
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
-    let mut module = InterfaceModule::new(MODULE_NAME.to_string()).await?;
-    let device_name = module.config.get_module_value("device".to_string()).unwrap_or("default".to_string());
-    let lib_path = module.config.get_module_value("library_path".to_string()).unwrap_or("./libpv_recorder.so".to_string());
-    let silent_limit = module.config.get_module_value("silent_limit".to_string())
+    let mut module = InterfaceModule::new(MODULE_NAME).await?;
+    let device_name = module.config.get_module_value("device").unwrap_or("default".to_string());
+    let lib_path = module.config.get_module_value("library_path").unwrap_or("./libpv_recorder.so".to_string());
+    let silent_limit = module.config.get_module_value("silent_limit")
         .map(|s| s.parse::<i32>().unwrap())
         .unwrap_or(50);
     let audio_devices = PvRecorderBuilder::new(512)
@@ -109,14 +109,15 @@ async fn main() -> Result<(), anyhow::Error> {
     let dev_id = get_device_id(device_name.clone(), audio_devices);
     let threshold = get_threshold(dev_id, lib_path.clone());
     debug!("Threshold: {}", threshold);
-    module.listen(INPUT_TOPIC.to_string()).await?;
+    module.listen(INPUT_TOPIC).await?;
+    let tmp_dir = module.config.alfred.tmp_dir.clone();
     loop {
         let (_, message) = module.receive().await?;
-        module.send_event(MODULE_NAME.to_string(), USER_START_RECORDING_EVENT.to_string(), &Message::default()).await?;
-        let audio_file = record(dev_id, module.config.get_alfred_tmp_dir(), threshold, lib_path.clone(), silent_limit)?;
+        module.send_event(MODULE_NAME, USER_START_RECORDING_EVENT, &Message::default()).await?;
+        let audio_file = record(dev_id, tmp_dir.clone(), threshold, lib_path.clone(), silent_limit)?;
         let event_message = Message { text: audio_file.clone(), message_type: MessageType::AUDIO, ..Message::default() };
-        module.send_event(MODULE_NAME.to_string(), USER_RECORDED_EVENT.to_string(), &event_message).await?;
+        module.send_event(MODULE_NAME, USER_RECORDED_EVENT, &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::AUDIO)?;
-        module.send(topic, &reply).await?;
+        module.send(&*topic, &reply).await?;
     }
 }
