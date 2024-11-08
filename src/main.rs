@@ -1,4 +1,4 @@
-use alfred_rs::interface_module::InterfaceModule;
+use alfred_rs::AlfredModule;
 use alfred_rs::log::debug;
 use alfred_rs::tokio;
 use alfred_rs::connection::{Receiver, Sender};
@@ -96,7 +96,7 @@ fn record(dev_id: i32, dir: &str, threshold: i64, lib_path: &str, silent_limit: 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
-    let mut module = InterfaceModule::new(MODULE_NAME).await?;
+    let mut module = AlfredModule::new(MODULE_NAME).await?;
     let device_name = module.config.get_module_value("device").unwrap_or_else(|| "default".to_string());
     let lib_path = module.config.get_module_value("library_path").unwrap_or_else(|| "./libpv_recorder.so".to_string());
     let silent_limit = module.config.get_module_value("silent_limit")
@@ -112,9 +112,9 @@ async fn main() -> Result<(), anyhow::Error> {
         let (_, message) = module.receive().await?;
         module.send_event(MODULE_NAME, USER_START_RECORDING_EVENT, &Message::default()).await?;
         let audio_file = record(dev_id, tmp_dir.as_str(), threshold, lib_path.as_str(), silent_limit)?;
-        let event_message = Message { text: audio_file.clone(), message_type: MessageType::AUDIO, ..Message::default() };
+        let event_message = Message { text: audio_file.clone(), message_type: MessageType::Audio, ..Message::default() };
         module.send_event(MODULE_NAME, USER_RECORDED_EVENT, &event_message).await?;
-        let (topic, reply) = message.reply(audio_file, MessageType::AUDIO)?;
+        let (topic, reply) = message.reply(audio_file, MessageType::Audio)?;
         module.send(&topic, &reply).await?;
     }
 }
