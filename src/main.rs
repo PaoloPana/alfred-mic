@@ -1,7 +1,6 @@
 use alfred_rs::AlfredModule;
 use alfred_rs::log::debug;
 use alfred_rs::tokio;
-use alfred_rs::connection::{Receiver, Sender};
 use alfred_rs::message::{Message, MessageType};
 use uuid::Uuid;
 use pv_recorder::PvRecorderBuilder;
