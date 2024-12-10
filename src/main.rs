@@ -89,7 +89,7 @@ fn get_threshold(dev_id: i32, lib_path: &str) -> Result<(i32, i32), Box<dyn Erro
 }
 
 
-fn record(dev_id: i32, dir: &str, thresholds: (i32, i32), lib_path: &str, silent_limit: i32) -> Result<String, anyhow::Error> {
+fn record(dev_id: i32, dir: &str, thresholds: (i32, i32), lib_path: &str, silent_limit: i32) -> Result<String, Box<dyn Error>> {
     let id = Uuid::new_v4();
     let path = format!("{dir}/{id}.wav");
     let path = path.as_str();
@@ -143,7 +143,7 @@ fn record(dev_id: i32, dir: &str, thresholds: (i32, i32), lib_path: &str, silent
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let mut module = AlfredModule::new(MODULE_NAME).await?;
     let device_name = module.config.get_module_value("device").unwrap_or_else(|| "default".to_string());
