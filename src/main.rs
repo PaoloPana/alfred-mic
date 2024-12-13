@@ -145,7 +145,7 @@ fn record(dev_id: i32, dir: &str, thresholds: (i32, i32), lib_path: &str, silent
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
-    let mut module = AlfredModule::new(MODULE_NAME).await?;
+    let mut module = AlfredModule::new(MODULE_NAME, env!("CARGO_PKG_VERSION")).await?;
     let device_name = module.config.get_module_value("device").unwrap_or_else(|| "default".to_string());
     let lib_path = module.config.get_module_value("library_path").unwrap_or_else(|| "./libpv_recorder.so".to_string());
     let silent_limit = module.config.get_module_value("silent_limit")
