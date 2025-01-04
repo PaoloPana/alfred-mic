@@ -2,10 +2,10 @@ use std::cmp::min;
 use std::error::Error;
 use std::io;
 use std::io::Write;
-use alfred_rs::AlfredModule;
-use alfred_rs::log::debug;
-use alfred_rs::tokio;
-use alfred_rs::message::{Message, MessageType};
+use alfred_core::AlfredModule;
+use alfred_core::log::debug;
+use alfred_core::tokio;
+use alfred_core::message::{Message, MessageType};
 use uuid::Uuid;
 use pv_recorder::PvRecorderBuilder;
 
