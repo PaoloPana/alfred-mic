@@ -5,3 +5,6 @@ sub_port = 1234
 
 [mic]
 device = "hw:CARD=Device,DEV=0"
+silent_limit = "25"
+noise_multiplier = "3.0"
+
