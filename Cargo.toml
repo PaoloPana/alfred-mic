@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2021"
 
 [dependencies]
-alfred-core = "0.1"
+alfred-core = "0.2"
 pv_recorder = "*"
 hound = "3.5"
 anyhow = "1.0"
