@@ -9,7 +9,8 @@ pv_recorder = "*"
 hound = "3.5"
 anyhow = "1.0"
 env_logger = "0.11"
-uuid = { version = "1.11", features = ["v4"] }
+uuid = { version = "1.12", features = ["v4"] }
+base64 = "0.22"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
