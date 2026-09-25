@@ -1,3 +1,4 @@
+mod recorder;
 mod utils;
 
 use std::cmp::min;
@@ -9,13 +10,14 @@ use alfred_core::log::debug;
 use alfred_core::tokio;
 use alfred_core::message::{Message, MessageType};
 use uuid::Uuid;
-use pv_recorder::PvRecorderBuilder;
+use crate::recorder::{Recorder, SAMPLE_RATE};
 use crate::utils::{f64_to_i64_unchecked, i64_to_f64_unchecked, usize_to_f64_unchecked};
 
 const MODULE_NAME: &str = "mic";
 const INPUT_TOPIC: &str = "mic";
 const USER_RECORDED_EVENT: &str = "user_recorded";
 const USER_START_RECORDING_EVENT: &str = "user_start_recording";
+const FRAME_LENGTH: usize = 512;
 
 struct LevelIndicator {
     max_level: f64,
@@ -57,16 +59,6 @@ impl LevelIndicator {
 
 }
 
-fn get_device_id(device_name: &str, devices: &[String]) -> i32 {
-    debug!("Devices: {:?}", devices);
-    for (id, dev) in devices.iter().enumerate() {
-        if dev.eq(&device_name) {
-            return i32::try_from(id).expect("Failed to convert device id to i32");
-        }
-    }
-    0
-}
-
 fn get_frame_avg(frame: &[i16]) -> f64 {
     let frame_sum = frame.iter()
         .map(|v| i64::from(v.abs()))
@@ -74,12 +66,9 @@ fn get_frame_avg(frame: &[i16]) -> f64 {
     i64_to_f64_unchecked(frame_sum) / usize_to_f64_unchecked(frame.len())
 }
 
-fn get_threshold(dev_id: i32, lib_path: &str, noise_multiplier: f64) -> Result<f64, Box<dyn Error>> {
-    debug!("Initializing pvrecorder...");
-    let recorder = PvRecorderBuilder::new(512)
-        .device_index(dev_id)
-        .library_path(lib_path.as_ref())
-        .init()?;
+fn get_threshold(device_name: &str, noise_multiplier: f64) -> Result<f64, Box<dyn Error>> {
+    debug!("Initializing recorder...");
+    let recorder = Recorder::new(Some(device_name), FRAME_LENGTH)?;
     let level_indicator = LevelIndicator::new(1000.0, None);
     recorder.start()?;
     let mut counter = 0;
@@ -97,16 +86,13 @@ fn get_threshold(dev_id: i32, lib_path: &str, noise_multiplier: f64) -> Result<f
 }
 
 
-fn record(dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: i64) -> Result<String, Box<dyn Error>> {
+fn record(device_name: &str, dir: &str, threshold: f64, silent_limit: i64) -> Result<String, Box<dyn Error>> {
     let id = Uuid::new_v4();
     let path = format!("{dir}/{id}.wav");
     let path = path.as_str();
 
-    debug!("Initializing pvrecorder...");
-    let recorder = PvRecorderBuilder::new(512)
-        .library_path(lib_path.as_ref())
-        .device_index(dev_id)
-        .init()?;
+    debug!("Initializing recorder...");
+    let recorder = Recorder::new(Some(device_name), FRAME_LENGTH)?;
 
     debug!("Start recording...");
     recorder.start()?;
@@ -135,7 +121,7 @@ fn record(dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: 
     debug!("Dumping audio to file...");
     let spec = hound::WavSpec {
         channels: 1,
-        sample_rate: 16000u32,
+        sample_rate: SAMPLE_RATE,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
@@ -151,22 +137,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let mut module = AlfredModule::new(MODULE_NAME, env!("CARGO_PKG_VERSION")).await?;
     let device_name = module.config.get_module_value("device").unwrap_or_else(|| "default".to_string());
-    let lib_path = module.config.get_module_value("library_path").unwrap_or_else(|| "./libpv_recorder.so".to_string());
     let silent_limit = module.config.get_module_value("silent_limit")
         .map_or(50, |s| s.parse::<i64>().expect("Failed to parse silent_limit as i32"));
     let noise_multiplier = module.config.get_module_value("noise_multiplier")
         .map_or(2.0, |s| s.parse::<f64>().expect("Failed to parse silent_limit as i32"));
-    let audio_devices = PvRecorderBuilder::new(512)
-        .library_path(lib_path.as_ref()).get_available_devices()?;
-    let dev_id = get_device_id(device_name.as_str(), &audio_devices);
-    let threshold = get_threshold(dev_id, lib_path.as_str(), noise_multiplier)?;
-    debug!("Threshold: {:?}", threshold);
+    debug!("Devices: {:?}", Recorder::available_devices()?);
+    let threshold = get_threshold(device_name.as_str(), noise_multiplier)?;
+    debug!("Threshold: {threshold:?}");
     module.listen(INPUT_TOPIC).await?;
     let tmp_dir = module.config.alfred.tmp_dir.clone();
     loop {
         let (_, message) = module.receive().await?;
         module.send_event(MODULE_NAME, USER_START_RECORDING_EVENT, &Message::default()).await?;
-        let audio_file = record(dev_id, tmp_dir.as_str(), threshold, lib_path.as_str(), silent_limit)?;
+        let audio_file = record(device_name.as_str(), tmp_dir.as_str(), threshold, silent_limit)?;
         let event_message = Message { text: audio_file.clone(), message_type: MessageType::Audio, ..Message::default() };
         module.send_event(MODULE_NAME, USER_RECORDED_EVENT, &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::Audio)?;
