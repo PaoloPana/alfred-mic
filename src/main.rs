@@ -8,14 +8,17 @@ use alfred_core::AlfredModule;
 use alfred_core::log::debug;
 use alfred_core::tokio;
 use alfred_core::message::{Message, MessageType};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use uuid::Uuid;
 use pv_recorder::PvRecorderBuilder;
 use crate::utils::{f64_to_i64_unchecked, i64_to_f64_unchecked, usize_to_f64_unchecked};
 
 const MODULE_NAME: &str = "mic";
 const INPUT_TOPIC: &str = "mic";
-const USER_RECORDED_EVENT: &str = "user_recorded";
+const USER_RECORD_DATA_EVENT: &str = "user_recorded";
 const USER_START_RECORDING_EVENT: &str = "user_start_recording";
+const USER_STOP_RECORDING_EVENT: &str = "user_stop_recording";
 
 struct LevelIndicator {
     max_level: f64,
@@ -67,6 +70,11 @@ fn get_device_id(device_name: &str, devices: &[String]) -> i32 {
     0
 }
 
+fn encode_frame(frame: &[i16]) -> String {
+    let bytes: Vec<u8> = frame.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+    BASE64.encode(bytes)
+}
+
 fn get_frame_avg(frame: &[i16]) -> f64 {
     let frame_sum = frame.iter()
         .map(|v| i64::from(v.abs()))
@@ -97,7 +105,7 @@ fn get_threshold(dev_id: i32, lib_path: &str, noise_multiplier: f64) -> Result<f
 }
 
 
-fn record(dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: i64) -> Result<String, Box<dyn Error>> {
+async fn record(module: &AlfredModule, dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: i64) -> Result<String, Box<dyn Error>> {
     let id = Uuid::new_v4();
     let path = format!("{dir}/{id}.wav");
     let path = path.as_str();
@@ -114,6 +122,8 @@ fn record(dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: 
     let mut audio_data = Vec::new();
     let mut is_recording = true;
     let mut is_silent = -1;
+    let mut sequence: u32 = 0;
+    let mut stream_id = String::new();
     let level_indicator = LevelIndicator::new(1000.0, Some(threshold));
     while is_recording {
         let frame = recorder.read()?;
@@ -124,8 +134,13 @@ fn record(dev_id: i32, dir: &str, threshold: f64, lib_path: &str, silent_limit: 
             is_silent += 1;
             is_recording = is_silent < silent_limit;
         }
+        stream_id = module.send_event_stream(MODULE_NAME, USER_RECORD_DATA_EVENT, encode_frame(&frame), MessageType::StreamAudio, sequence, stream_id, false).await?;
+        sequence += 1;
         audio_data.extend_from_slice(&frame);
         level_indicator.show(mean, mean)?;
+    }
+    if !stream_id.is_empty() {
+        module.send_event_stream(MODULE_NAME, USER_RECORD_DATA_EVENT, "".to_string(), MessageType::StreamAudio, sequence, stream_id, true).await?;
     }
     level_indicator.close();
 
@@ -166,9 +181,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         let (_, message) = module.receive().await?;
         module.send_event(MODULE_NAME, USER_START_RECORDING_EVENT, &Message::default()).await?;
-        let audio_file = record(dev_id, tmp_dir.as_str(), threshold, lib_path.as_str(), silent_limit)?;
+        let audio_file = record(&module, dev_id, tmp_dir.as_str(), threshold, lib_path.as_str(), silent_limit).await?;
         let event_message = Message { text: audio_file.clone(), message_type: MessageType::Audio, ..Message::default() };
-        module.send_event(MODULE_NAME, USER_RECORDED_EVENT, &event_message).await?;
+        module.send_event(MODULE_NAME, USER_STOP_RECORDING_EVENT, &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::Audio)?;
         module.send(&topic, &reply).await?;
     }
