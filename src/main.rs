@@ -58,7 +58,7 @@ impl LevelIndicator {
 }
 
 fn get_device_id(device_name: &str, devices: &[String]) -> i32 {
-    debug!("Devices: {:?}", devices);
+    debug!("Devices: {devices:?}");
     for (id, dev) in devices.iter().enumerate() {
         if dev.eq(&device_name) {
             return i32::try_from(id).expect("Failed to convert device id to i32");
@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .library_path(lib_path.as_ref()).get_available_devices()?;
     let dev_id = get_device_id(device_name.as_str(), &audio_devices);
     let threshold = get_threshold(dev_id, lib_path.as_str(), noise_multiplier)?;
-    debug!("Threshold: {:?}", threshold);
+    debug!("Threshold: {threshold:?}");
     module.listen(INPUT_TOPIC).await?;
     let tmp_dir = module.config.alfred.tmp_dir.clone();
     loop {

@@ -1,0 +1,11 @@
+version = 4
+
+[[package]]
+name = "pv_recorder"
+version = "1.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6d471f6dc8c6e1b9c573db177a6e6af8cf0db7c95a9463a5848dd2d67c3cf33"
+dependencies = [
+ "libc",
+ "libloading",
+]
