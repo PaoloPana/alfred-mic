@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let (_, message) = module.receive().await?;
         module.send_event(MODULE_NAME, USER_START_RECORDING_EVENT, &Message::default()).await?;
         let audio_file = record(dev_id, tmp_dir.as_str(), threshold, lib_path.as_str(), silent_limit)?;
-        let event_message = Message { text: audio_file.clone(), message_type: MessageType::Audio, ..Message::default() };
+        let event_message = Message { payload: audio_file.clone().into(), message_type: MessageType::Audio, ..Message::default() };
         module.send_event(MODULE_NAME, USER_RECORDED_EVENT, &event_message).await?;
         let (topic, reply) = message.reply(audio_file, MessageType::Audio)?;
         module.send(&topic, &reply).await?;
